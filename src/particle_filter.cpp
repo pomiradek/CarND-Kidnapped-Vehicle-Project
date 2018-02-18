@@ -67,6 +67,11 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
     std_y = std_pos[1];
     std_theta = std_pos[2];
 
+    // This creates a normal (Gaussian) distribution centered around 0
+    normal_distribution<double> dist_x(0, std_x);
+    normal_distribution<double> dist_y(0, std_y);
+    normal_distribution<double> dist_theta(0, std_theta);
+
     for (int i = 0; i < num_particles; ++i) {
 
         double pred_x, pred_y, pred_theta;
@@ -82,16 +87,9 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
             pred_theta = particles[i].theta+yaw_rate*delta_t;
         }
 
-        // This line creates a normal (Gaussian) distribution for x
-        normal_distribution<double> dist_x(pred_x, std_x);
-
-        // Create normal distributions for y and theta
-        normal_distribution<double> dist_y(pred_y, std_y);
-        normal_distribution<double> dist_theta(pred_theta, std_theta);
-
-        particles[i].x = dist_x(gen);
-        particles[i].y = dist_y(gen);
-        particles[i].theta = dist_theta(gen);
+        particles[i].x = pred_x + dist_x(gen);
+        particles[i].y = pred_y + dist_y(gen);
+        particles[i].theta = pred_theta + dist_theta(gen);
     }
 }
 
@@ -125,11 +123,17 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 	//   and the following is a good resource for the actual equation to implement (look at equation 
 	//   3.33
 	//   http://planning.cs.uiuc.edu/node99.html
-    double gauss_norm, exponent;
+    double exponent;
     double sig_x = std_landmark[0];
     double sig_y = std_landmark[1];
 
     double total_weight = 0.0;
+    double gauss_norm = (1.0/(2.0 * M_PI * sig_x * sig_y));
+    double sig_x_2 = 2.0 * sig_x * sig_x;
+    double sig_y_2 = 2.0 * sig_y * sig_y;
+
+    // TODO add some defensive logic to handle the situation where none of the landmarks are inside the sensor range
+    // even if it doesn't occur in the simulation. At the moment, if this happens the weight will left with the initial value of 1.
 
     for (unsigned int j = 0; j < num_particles; ++j) {
 
@@ -148,7 +152,7 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
         // Filter only landmarks in range of radar
         vector<LandmarkObs> valid_landmarks;
         for (auto k : map_landmarks.landmark_list) {
-            if ((fabs((particles[j].x - k.x_f)) <= sensor_range) && (fabs(( particles[j].y - k.y_f)) <= sensor_range)) {
+            if (dist(particles[j].x, particles[j].y, k.x_f, k.y_f) <= sensor_range) {
                 LandmarkObs valid_landmark{};
                 valid_landmark.id = k.id_i;
                 valid_landmark.x = k.x_f;
@@ -160,13 +164,13 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
         dataAssociation(valid_landmarks, observations_in_map_cor_sys);
 
         particles[j].weight = 1.0;
-        gauss_norm = (1.0/(2.0 * M_PI * sig_x * sig_y));
+
         for (auto &observations_in_map_cor_sy : observations_in_map_cor_sys) {
 
             for (auto &valid_landmark : valid_landmarks) {
                 if (observations_in_map_cor_sy.id == valid_landmark.id) {
-                    exponent = (pow(observations_in_map_cor_sy.x - valid_landmark.x, 2))/(2.0 * sig_x * sig_x) + (pow(
-                            observations_in_map_cor_sy.y - valid_landmark.y, 2))/(2.0 * sig_y * sig_y);
+                    exponent = (pow(observations_in_map_cor_sy.x - valid_landmark.x, 2))/sig_x_2 + (pow(
+                            observations_in_map_cor_sy.y - valid_landmark.y, 2))/sig_y_2;
                     particles[j].weight *= (gauss_norm * exp(-exponent));
                 }
             }
@@ -195,6 +199,18 @@ void ParticleFilter::resample() {
     mt19937 gen(rd());
     discrete_distribution<int> dindex(0, num_particles-1);
     uniform_real_distribution<double> dweight(0.0, maxw);
+
+    /*
+     * discrete_distribution<int> discrete_dist(weights.begin(), weights.end());
+
+    vector<Particle> resampled_particles(num_particles);
+
+    for (int i = 0; i < num_particles; ++i) {
+        int index = discrete_dist(gen_);
+        resampled_particles.at(i) = particles.at(index);
+    }
+    particles = resampled_particles;
+     */
 
     int index = dindex(gen);
 
